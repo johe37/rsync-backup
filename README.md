@@ -1,172 +1,86 @@
 # rsync-backup
 
-A simple Bash-based backup utility using `rsync`.
-
-The script performs scheduled backups from a source directory to a destination directory, creates separate dated log files for each backup run, and is designed to be executed automatically using `cron`.
+A Python-based backup utility using `rsync` with a configurable grace period before deleting files that have been removed from the source.
 
 ## Features
 
-* Uses `rsync` for efficient incremental backups
-* Accepts source and destination directories as arguments
-* Creates a unique log file for each backup run
-* Stores logs in `/var/log/rsync_backup/`
-* Preserves file attributes using rsync archive mode
-* Prevents destination data from drifting using `--delete`
-* Suitable for nightly cron backups
+- Incremental backups using `rsync -av`
+- Delayed deletion via `--grace-days` / `GRACE_DAYS` (default: 14) — files deleted from the source are retained in the destination until the grace period expires
+- Automatically cancels scheduled deletion if a file reappears in the source
+- Dry-run support (`--dry-run` or `DRY_RUN=1`) to preview changes safely
+- Concurrency protection via file locking to prevent overlapping runs
+- Logging to both stdout and dated log files in `/var/log/rsync_backup/`
+- Persistent state tracking in `/var/lib/rsync_backup/`
 
 ## Installation
-
-Clone the repository:
 
 ```bash
 git clone <repository-url>
 cd rsync-backup
-```
-
-Install the script:
-
-```bash
-sudo cp rsync-backup.sh /usr/local/sbin/rsync-backup.sh
-sudo chmod +x /usr/local/sbin/rsync-backup.sh
-```
-
-Create the log directory:
-
-```bash
-sudo mkdir -p /var/log/rsync_backup
-sudo chown root:root /var/log/rsync_backup
-sudo chmod 750 /var/log/rsync_backup
+sudo cp rsync-backup.py /usr/local/sbin/rsync-backup
+sudo chmod +x /usr/local/sbin/rsync-backup
+sudo mkdir -p /var/log/rsync_backup /var/lib/rsync_backup
+sudo chown root:root /var/log/rsync_backup /var/lib/rsync_backup
+sudo chmod 750 /var/log/rsync_backup /var/lib/rsync_backup
 ```
 
 ## Usage
 
-Run manually:
-
 ```bash
-rsync-backup.sh <source_directory> <destination_directory>
+rsync-backup <source_directory> <destination_directory>
 ```
 
-Example:
+### Example
 
 ```bash
-rsync-backup.sh /home/user/data /backup/data
+rsync-backup /home/user/data /backup/data
 ```
 
-This will create a log file similar to:
+### Options
 
-```text
-/var/log/rsync_backup/home_user_data-to-backup_data-2026-08-07.log
+| Option            | Environment variable | Default | Description                                      |
+|-------------------|----------------------|---------|--------------------------------------------------|
+| `--grace-days N`  | `GRACE_DAYS`         | 14      | Days a file must remain missing before deletion  |
+| `--dry-run`       | `DRY_RUN=1`          | off     | Preview changes without modifying anything       |
+
+```bash
+# Preview with a longer grace period
+rsync-backup --grace-days 30 --dry-run /home/user/data /backup/data
+
+# Same thing using environment variables
+GRACE_DAYS=30 DRY_RUN=1 rsync-backup /home/user/data /backup/data
 ```
 
 ## Cron Setup
 
-To run the backup every night at 02:00:
-
-Edit the root crontab:
-
-```bash
-sudo crontab -e
-```
-
-Add:
-
-```cron
-0 2 * * * /usr/local/sbin/rsync-backup.sh /home/user/data /backup/data
-```
-
-The backup will now run automatically every night.
-
-## Logging
-
-Each execution creates a new log file:
-
-```text
-/var/log/rsync_backup/
-├── home_user_data-to-backup_data-2026-08-07.log
-├── home_user_data-to-backup_data-2026-08-08.log
-└── home_user_data-to-backup_data-2026-08-09.log
-```
-
-Logs contain:
-
-* Backup start time
-* Source and destination paths
-* rsync output
-* Success or failure status
-
-## Log Rotation
-
-Because logs are stored under `/var/log`, it is recommended to configure `logrotate`.
-
-Create:
-
-```bash
-sudo nano /etc/logrotate.d/rsync_backup
-```
-
-Add:
-
-```conf
-/var/log/rsync_backup/*.log {
-    weekly
-    rotate 12
-    compress
-    missingok
-    notifempty
-}
-```
-
-This keeps approximately three months of logs.
-
-## Important Notes
-
-### `--delete`
-
-The script uses:
-
-```bash
-rsync --delete
-```
-
-This means files deleted from the source will also be removed from the backup destination.
-
-Example:
+Run nightly at 02:00 (edit with `sudo crontab -e`):
 
 ```
-Source:
-  file1.txt
-  file2.txt
-
-Delete file2.txt from source
-
-Next backup:
-  file2.txt is removed from destination
+0 2 * * * /usr/local/sbin/rsync-backup /home/user/data /backup/data
 ```
 
-If you need historical recovery, use snapshots or remove `--delete`.
+## Logging & State
+
+| Type  | Location                                      |
+|-------|-----------------------------------------------|
+| Logs  | `/var/log/rsync_backup/<pair>-YYYY-MM-DD_HH-MM-SS.log` |
+| State | `/var/lib/rsync_backup/<pair>.missing.tsv`    |
+| Lock  | `/var/lib/rsync_backup/<pair>.lock`           |
+
+`<pair>` is derived from the source and destination paths (e.g. `home_user_data-to-backup_data`).
+
+## How Delayed Deletion Works
+
+Instead of running `rsync --delete` immediately, missing paths are tracked in the state file:
+
+1. **Day 1** — File disappears from source → recorded as missing, kept in destination
+2. **Days 2–13** — Still missing → kept in destination  
+   (if it reappears in the source, it is removed from the deletion queue)
+3. **Day 14+** — Missing for at least `GRACE_DAYS` → deleted from destination
 
 ## Requirements
 
-* Linux system
-* Bash
-* rsync
-* cron
-
-Install rsync if needed:
-
-Debian/Ubuntu:
-
-```bash
-sudo apt install rsync
+- Python 3.8+
+- `rsync`
+- Linux (uses `fcntl` for locking)
 ```
-
-RHEL/Fedora:
-
-```bash
-sudo dnf install rsync
-```
-
-## License
-
-MIT License
-

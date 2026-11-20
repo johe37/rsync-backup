@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-rsync backup with grace-period deletion of files missing from source.
+rsync-grace — rsync backup with grace-period deletion of files missing from source.
 """
 
 import os
 import sys
-import time
 import fcntl
 import logging
 import argparse
 import subprocess
+import shutil
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Dict, Set
+from typing import Dict, Set, List
 
 LOG_DIR = Path("/var/log/rsync_backup")
 STATE_DIR = Path("/var/lib/rsync_backup")
@@ -56,10 +56,12 @@ def collect_paths(root: Path) -> Set[str]:
     return paths
 
 
-def run_rsync(src: Path, dest: Path, dry_run: bool) -> None:
+def run_rsync(src: Path, dest: Path, dry_run: bool, excludes: List[str]) -> None:
     cmd = ["rsync", "-avh"]
     if dry_run:
         cmd.append("--dry-run")
+    for pattern in excludes:
+        cmd.extend(["--exclude", pattern])
     cmd += [f"{src}/", f"{dest}/"]
 
     logging.info(f"Running: {' '.join(cmd)}")
@@ -118,7 +120,6 @@ def process_deletions(
                 else:
                     logging.info(f"Deleting (missing ≥ {grace_days}d, since {first_seen}): {rel}")
                     if target.is_dir() and not target.is_symlink():
-                        import shutil
                         shutil.rmtree(target)
                     else:
                         target.unlink(missing_ok=True)
@@ -132,11 +133,30 @@ def process_deletions(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="rsync backup with grace-period deletion")
+    parser = argparse.ArgumentParser(
+        description="rsync backup with grace-period deletion"
+    )
     parser.add_argument("source", type=Path)
     parser.add_argument("destination", type=Path)
-    parser.add_argument("--grace-days", type=int, default=int(os.getenv("GRACE_DAYS", "14")))
-    parser.add_argument("--dry-run", action="store_true", default=os.getenv("DRY_RUN") == "1")
+    parser.add_argument(
+        "--grace-days",
+        type=int,
+        default=int(os.getenv("GRACE_DAYS", "14")),
+        help="Days a file must remain missing before deletion (default: 14)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=os.getenv("DRY_RUN") == "1",
+        help="Preview changes without modifying anything",
+    )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="PATTERN",
+        help="Exclude pattern passed to rsync (can be used multiple times)",
+    )
     args = parser.parse_args()
 
     src = args.source.resolve()
@@ -158,8 +178,10 @@ def main() -> None:
     logging.info(f"===== Backup started (GRACE_DAYS={args.grace_days}, DRY_RUN={int(args.dry_run)}) =====")
     logging.info(f"Source: {src}")
     logging.info(f"Destination: {dest}")
+    if args.exclude:
+        logging.info(f"Excludes: {', '.join(args.exclude)}")
 
-    run_rsync(src, dest, args.dry_run)
+    run_rsync(src, dest, args.dry_run, args.exclude)
 
     src_paths = collect_paths(src)
     state = load_state(state_file)

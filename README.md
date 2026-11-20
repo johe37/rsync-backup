@@ -26,8 +26,8 @@ cd rsync-backup
 Install the script:
 
 ```bash
-sudo cp backup-rsync.sh /usr/local/sbin/backup-rsync.sh
-sudo chmod +x /usr/local/sbin/backup-rsync.sh
+sudo cp rsync-backup.sh /usr/local/sbin/rsync-backup.sh
+sudo chmod +x /usr/local/sbin/rsync-backup.sh
 ```
 
 Create the log directory:
@@ -43,13 +43,13 @@ sudo chmod 750 /var/log/rsync_backup
 Run manually:
 
 ```bash
-backup-rsync.sh <source_directory> <destination_directory>
+rsync-backup.sh <source_directory> <destination_directory>
 ```
 
 Example:
 
 ```bash
-backup-rsync.sh /home/user/data /backup/data
+rsync-backup.sh /home/user/data /backup/data
 ```
 
 This will create a log file similar to:
@@ -71,7 +71,7 @@ sudo crontab -e
 Add:
 
 ```cron
-0 2 * * * /usr/local/sbin/backup-rsync.sh /home/user/data /backup/data
+0 2 * * * /usr/local/sbin/rsync-backup.sh /home/user/data /backup/data
 ```
 
 The backup will now run automatically every night.

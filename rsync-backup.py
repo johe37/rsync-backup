@@ -132,12 +132,82 @@ def process_deletions(
     return new_state
 
 
+def show_status(pair_id: str | None = None) -> None:
+    """Show a compact status of the latest run for each backup pair."""
+    if not LOG_DIR.exists():
+        print("No backup logs found.")
+        return
+
+    logs = sorted(LOG_DIR.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+    if not logs:
+        print("No matching backup logs found.")
+        return
+
+    # Keep only the newest log per pair
+    latest = {}
+    for log_file in logs:
+        name = log_file.stem  # e.g. 2026-11-21_03-00-01_home_johe-to-...
+
+        # Timestamp is the first two parts: YYYY-MM-DD_HH-MM-SS
+        parts = name.split("_", 2)
+        if len(parts) >= 3:
+            pair = parts[2]
+        else:
+            pair = name
+
+        if pair_id and not pair.startswith(pair_id):
+            continue
+
+        if pair not in latest:
+            latest[pair] = log_file
+
+    if not latest:
+        print("No matching backup logs found.")
+        return
+
+    print("Backup status:")
+    print("─" * 72)
+
+    for pair, log_file in sorted(latest.items()):
+        mtime = datetime.fromtimestamp(log_file.stat().st_mtime)
+        age = datetime.now() - mtime
+        if age.days:
+            age_str = f"{age.days}d {age.seconds // 3600}h ago"
+        else:
+            age_str = f"{age.seconds // 3600}h {(age.seconds % 3600) // 60}m ago"
+
+        try:
+            content = log_file.read_text()
+            if "Backup completed successfully" in content:
+                status = "OK"
+            elif "Dry-run completed successfully" in content:
+                status = "DRY-RUN"
+            elif "FAILED" in content or "failed" in content:
+                status = "FAILED"
+            else:
+                status = "UNKNOWN"
+        except Exception:
+            status = "ERROR"
+
+        # Make the name shorter and nicer
+        short = (pair
+                 .replace("zfs_pool01_backups_", "")
+                 .replace("home_", "")
+                 .replace("mnt_", "")
+                 .replace("var_lib_", ""))
+
+        print(f"  {mtime.strftime('%Y-%m-%d %H:%M')}  {status:<8}  {short:<40} ({age_str})")
+
+    print("─" * 72)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="rsync backup with grace-period deletion"
     )
-    parser.add_argument("source", type=Path)
-    parser.add_argument("destination", type=Path)
+    parser.add_argument("source", type=Path, nargs="?", help="Source directory")
+    parser.add_argument("destination", type=Path, nargs="?", help="Destination directory")
     parser.add_argument(
         "--grace-days",
         type=int,
@@ -157,7 +227,25 @@ def main() -> None:
         metavar="PATTERN",
         help="Exclude pattern passed to rsync (can be used multiple times)",
     )
+    parser.add_argument(
+    "--status",
+    action="store_true",
+    help="Show status of the most recent backup run(s) and exit",
+    )
+    parser.add_argument(
+        "--status-pair",
+        metavar="PAIR_ID",
+        help="Only show status for a specific pair id",
+    )
     args = parser.parse_args()
+
+    if args.status or args.status_pair:
+        show_status(pair_id=args.status_pair)
+        sys.exit(0)
+
+    # Normal backup mode requires source + destination
+    if not args.source or not args.destination:
+        parser.error("source and destination are required unless --status is used")
 
     src = args.source.resolve()
     dest = args.destination.resolve()
@@ -168,7 +256,7 @@ def main() -> None:
 
     pair_id = f"{sanitize(str(src))}-to-{sanitize(str(dest))}"
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_file = LOG_DIR / f"{pair_id}-{timestamp}.log"
+    log_file = LOG_DIR / f"{timestamp}_{pair_id}.log"
     state_file = STATE_DIR / f"{pair_id}.missing.tsv"
     lock_file = STATE_DIR / f"{pair_id}.lock"
 

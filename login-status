@@ -1,0 +1,21 @@
+#!/bin/bash
+# Shown on interactive login
+
+echo
+echo "────────────────────────────────────────────────────────────"
+echo " Backup status"
+echo "────────────────────────────────────────────────────────────"
+# Add with visudo: johe ALL=(root) NOPASSWD: /usr/local/sbin/rsync-backup --status
+sudo /usr/local/sbin/rsync-backup --status 2>/dev/null || echo "  (rsync-backup status unavailable)"
+
+echo
+echo "────────────────────────────────────────────────────────────"
+echo " Running containers"
+echo "────────────────────────────────────────────────────────────"
+if command -v docker >/dev/null; then
+    docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Image}}" 2>/dev/null \
+        || echo "  (docker not available or permission denied)"
+else
+    echo "  docker not installed"
+fi
+echo
